@@ -240,8 +240,7 @@ func (it *CandidateIterator) Stats() CandidateStats {
 // Close ends the stream. It is idempotent.
 func (it *CandidateIterator) Close() error {
 	it.mu.Lock()
-	defer it.mu.Unlock()
-	if it.state == IteratorClosed || it.state == IteratorExhausted {
+	if it.state == IteratorClosed {
 		return nil
 	}
 	it.state = IteratorClosed
