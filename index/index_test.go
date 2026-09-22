@@ -502,3 +502,44 @@ func TestFallbackReasonNames(t *testing.T) {
 		}
 	}
 }
+
+func TestCoverageLifecycleAndStaleTokens(t *testing.T) {
+	ix := openIndex(t, t.TempDir())
+	if got := ix.Completeness(); got != Unknown {
+		t.Fatalf("Open completeness = %v, want Unknown", got)
+	}
+	first := ix.BeginCoverage()
+	if got := ix.Completeness(); got != Incomplete {
+		t.Fatalf("BeginCoverage completeness = %v, want Incomplete", got)
+	}
+	second := ix.BeginCoverage()
+	if ix.CompleteCoverage(first) {
+		t.Fatal("stale coverage token completed a later attempt")
+	}
+	if !ix.CompleteCoverage(second) || ix.Completeness() != Complete {
+		t.Fatal("current coverage token did not complete the index")
+	}
+	ix.InvalidateCoverage()
+	if ix.Completeness() != Incomplete {
+		t.Fatal("InvalidateCoverage did not reopen coverage")
+	}
+	if ix.CompleteCoverage(second) {
+		t.Fatal("invalidated coverage token completed the index")
+	}
+}
+
+func TestEmptyCoverageCanCompleteAndReopenStartsUnknown(t *testing.T) {
+	dir := t.TempDir()
+	ix := openIndex(t, dir)
+	token := ix.BeginCoverage()
+	if !ix.CompleteCoverage(token) || ix.Completeness() != Complete {
+		t.Fatal("an empty successful coverage did not become Complete")
+	}
+	reopened := openIndex(t, dir)
+	if reopened.Completeness() != Unknown {
+		t.Fatalf("reopened completeness = %v, want Unknown", reopened.Completeness())
+	}
+	if reopened.State().SnapshotGeneration.Instance == ix.State().SnapshotGeneration.Instance {
+		t.Fatal("reopened index reused process-local instance identity")
+	}
+}

@@ -2,6 +2,7 @@ package index
 
 import (
 	"context"
+	cryptorand "crypto/rand"
 	"errors"
 	"fmt"
 	"os"
@@ -103,6 +104,30 @@ type tombKey struct {
 	path      string
 }
 
+// Completeness describes whether the index has been verified against the full
+// corpus. Coverage is process-local and never changes SCNB bytes.
+type Completeness uint8
+
+const (
+	Unknown Completeness = iota
+	Incomplete
+	Complete
+)
+
+// Generation identifies one in-memory index instance and a revision within it.
+// The random instance makes tokens from a reopened index stale.
+type Generation struct {
+	Instance [16]byte
+	Revision uint64
+}
+
+// State is the process-local lifecycle snapshot of an index.
+type State struct {
+	Completeness       Completeness
+	SnapshotGeneration Generation
+	CoverageGeneration Generation
+}
+
 // NameIndex presents the segments as one.
 type NameIndex struct {
 	dir string
@@ -118,8 +143,12 @@ type NameIndex struct {
 	tomb               map[tombKey]uint64
 	tombBytes          int64
 	seq                uint64
-	incomplete         bool
-	coverageGeneration uint64
+	incomplete         bool   // legacy query behavior; new APIs use completeness.
+	coverageGeneration uint64 // legacy rebuild generation.
+	completeness       Completeness
+	instance           [16]byte
+	snapshotRevision   uint64
+	coverageRevision   uint64
 }
 
 // publicationUncertainError marks a cache publication whose destination rename
@@ -184,8 +213,11 @@ func Open(dir string, cfg Config) (*NameIndex, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("index: creating %s: %w", dir, err)
 	}
-
-	ix := &NameIndex{dir: dir, cfg: cfg, tomb: map[tombKey]uint64{}}
+	var instance [16]byte
+	if _, err := cryptorand.Read(instance[:]); err != nil {
+		return nil, fmt.Errorf("index: generating instance identity: %w", err)
+	}
+	ix := &NameIndex{dir: dir, cfg: cfg, tomb: map[tombKey]uint64{}, instance: instance, completeness: Unknown}
 
 	basePath := filepath.Join(dir, baseName)
 	// The path combines the caller's index directory with a fixed name, so no
@@ -222,6 +254,7 @@ func Open(dir string, cfg Config) (*NameIndex, error) {
 	// accurate.
 	if ix.entryCount() >= 5000000 {
 		ix.incomplete = true
+		ix.completeness = Incomplete
 	}
 	return ix, nil
 }
@@ -470,6 +503,7 @@ func (ix *NameIndex) Append(entries []Entry) error {
 	for _, e := range entries {
 		ix.delta = append(ix.delta, live{seq: seq, namespace: e.Namespace, path: e.Path})
 	}
+	ix.snapshotRevision++
 	return nil
 }
 
@@ -499,6 +533,7 @@ func (ix *NameIndex) Tombstone(entries []Entry) error {
 			ix.tomb[k] = seq
 		}
 	}
+	ix.snapshotRevision++
 	return nil
 }
 
@@ -560,55 +595,85 @@ func isChildOf(path, dir string) bool {
 	return !strings.Contains(path[len(dir)+1:], "/")
 }
 
-// Incomplete reports whether this index covers less than its corpus.
+// State returns the current process-local lifecycle snapshot.
+func (ix *NameIndex) State() State {
+	ix.mu.RLock()
+	defer ix.mu.RUnlock()
+	return State{Completeness: ix.completeness, SnapshotGeneration: Generation{Instance: ix.instance, Revision: ix.snapshotRevision}, CoverageGeneration: Generation{Instance: ix.instance, Revision: ix.coverageRevision}}
+}
+
+// BeginCoverage starts a full corpus coverage attempt and returns its token.
+func (ix *NameIndex) BeginCoverage() Generation {
+	ix.mu.Lock()
+	defer ix.mu.Unlock()
+	ix.coverageRevision++
+	ix.completeness, ix.incomplete = Incomplete, true
+	return Generation{Instance: ix.instance, Revision: ix.coverageRevision}
+}
+
+// CompleteCoverage marks an attempt complete when its token is still current.
+func (ix *NameIndex) CompleteCoverage(token Generation) bool {
+	ix.mu.Lock()
+	defer ix.mu.Unlock()
+	if token.Instance != ix.instance || token.Revision != ix.coverageRevision {
+		return false
+	}
+	ix.completeness, ix.incomplete = Complete, false
+	return true
+}
+
+// InvalidateCoverage makes in-flight coverage tokens stale and marks the
+// snapshot incomplete. Coverage state is process-local and not persisted.
+func (ix *NameIndex) InvalidateCoverage() {
+	ix.mu.Lock()
+	defer ix.mu.Unlock()
+	ix.snapshotRevision++
+	ix.coverageRevision++
+	ix.completeness, ix.incomplete = Incomplete, true
+}
+
+func (ix *NameIndex) Completeness() Completeness {
+	ix.mu.RLock()
+	defer ix.mu.RUnlock()
+	return ix.completeness
+}
+
+func (ix *NameIndex) Generation() Generation {
+	ix.mu.RLock()
+	defer ix.mu.RUnlock()
+	return Generation{Instance: ix.instance, Revision: ix.snapshotRevision}
+}
+
+// Incomplete and Entries are retained for compatibility with older callers.
 func (ix *NameIndex) Incomplete() bool {
 	ix.mu.RLock()
 	defer ix.mu.RUnlock()
 	return ix.incomplete
 }
 
-// Entries is how many names the index holds, base segment and overlay
-// together. What an operator reads to tell a built index from an empty one.
 func (ix *NameIndex) Entries() uint64 {
 	ix.mu.RLock()
 	defer ix.mu.RUnlock()
 	return ix.entryCount()
 }
 
-// SetIncomplete records whether the index holds less than the tree it covers.
-//
-// Every true write advances the generation, including an idempotent one. The
-// caller is reporting a new coverage loss, and a rebuild already in flight must
-// not erase that newer signal when it finishes.
 func (ix *NameIndex) SetIncomplete(v bool) {
-	ix.mu.Lock()
-	ix.incomplete = v
 	if v {
-		ix.coverageGeneration++
+		ix.InvalidateCoverage()
+		return
+	}
+	ix.mu.Lock()
+	ix.incomplete = false
+	if ix.completeness == Incomplete {
+		ix.completeness = Complete
 	}
 	ix.mu.Unlock()
 }
 
-// BeginRebuild marks the index incomplete and returns the coverage generation
-// this rebuild may clear if no newer loss arrives.
-func (ix *NameIndex) BeginRebuild() uint64 {
-	ix.mu.Lock()
-	defer ix.mu.Unlock()
-	ix.incomplete = true
-	ix.coverageGeneration++
-	return ix.coverageGeneration
-}
+func (ix *NameIndex) BeginRebuild() uint64 { return ix.BeginCoverage().Revision }
 
-// CompleteRebuild clears the incomplete state only when no coverage loss was
-// reported after BeginRebuild. False asks the caller to retain partial status.
 func (ix *NameIndex) CompleteRebuild(generation uint64) bool {
-	ix.mu.Lock()
-	defer ix.mu.Unlock()
-	if ix.coverageGeneration != generation {
-		return false
-	}
-	ix.incomplete = false
-	return true
+	return ix.CompleteCoverage(Generation{Instance: ix.instance, Revision: generation})
 }
 
 // NeedsMerge reports whether the overlay has exceeded its allowance against the
@@ -939,8 +1004,10 @@ func (ix *NameIndex) publish(snap mergeSnapshot, buf []byte) error {
 	})
 	if werr != nil {
 		if res.Outcome == fsatomic.PublicationUncertain {
+			ix.snapshotRevision++
+			ix.coverageRevision++
 			ix.incomplete = true
-			ix.coverageGeneration++
+			ix.completeness = Incomplete
 			return fmt.Errorf("index: base publication uncertain; rebuild required: %w", werr)
 		}
 		return fmt.Errorf("index: publishing the new base: %w", werr)
@@ -975,8 +1042,10 @@ func (ix *NameIndex) publish(snap mergeSnapshot, buf []byte) error {
 	tombBytes, terr := rewriteTombstones(ix.dir, survivors)
 	if terr != nil {
 		if errors.As(terr, new(*publicationUncertainError)) {
+			ix.snapshotRevision++
+			ix.coverageRevision++
 			ix.incomplete = true
-			ix.coverageGeneration++
+			ix.completeness = Incomplete
 		}
 		return terr
 	}
@@ -1008,6 +1077,7 @@ func (ix *NameIndex) publish(snap mergeSnapshot, buf []byte) error {
 	ix.deltaBytes = deltaBytes
 	ix.tomb = survivors
 	ix.tombBytes = tombBytes
+	ix.snapshotRevision++
 	return nil
 }
 
