@@ -1,0 +1,28 @@
+# Security policy
+
+namesearch is pre-1.0 and has no published release artifacts. The index is a
+performance cache, not an authorization boundary: candidate results must be
+checked against the caller's ACL and current filesystem metadata before being
+shown or acted on.
+
+## Reporting a vulnerability
+
+Please report suspected vulnerabilities privately to the maintainer listed in
+[MAINTAINERS], preferably by GitHub Security Advisory or direct maintainer
+contact. Include the affected commit, package/API, environment, reproduction
+steps, impact, and a proposed mitigation if known. Do not disclose private
+corpus names, credentials, or customer data in a report.
+
+If private reporting is unavailable, open an issue containing only a request
+for a private contact channel; do not publish exploit details.
+
+We will acknowledge reports, investigate, and coordinate disclosure with the
+reporter. Fixes may be released as source changes before a binary/module
+publication exists.
+
+## Format and corruption safety
+
+SCNB v1 is a compatibility contract. Parsers must reject structural
+corruption; a torn append-only tail may be recovered only according to the
+framing rules. Never treat an incomplete record as a complete search result.
+When in doubt, disable the index and rebuild from the authoritative corpus.

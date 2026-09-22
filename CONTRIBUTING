@@ -1,0 +1,47 @@
+# Contributing
+
+Thanks for helping improve namesearch. The project is pre-1.0 and has no
+published release artifacts yet.
+
+## Before opening a change
+
+Read [README], [SUPPORT], and [SECURITY]. Keep changes focused on the
+standalone namesearch repository; do not add Stowcloud service, transport, ACL,
+or application behavior here.
+
+For public API changes, explain compatibility impact and update release notes.
+For SCNB changes, preserve existing v1 bytes and add an explicit format version
+and migration/rollback plan before implementation. The index is disposable
+cache state; source data remains authoritative.
+
+## Local checks
+
+Use Go 1.27.1 and run:
+
+```sh
+go test ./...
+go vet ./...
+go test -race ./...
+```
+
+Run `gofmt` on changed Go files. CI also checks Linux amd64/arm64 behavior and
+non-Linux compilation. Keep tests deterministic and avoid relying on local
+filesystem layout, network services, or private data.
+
+## Pull requests
+
+Describe the behavior change, tests run, dependency changes, format impact,
+and rollback procedure. Do not commit generated binaries, local indexes, or
+credentials. A maintainer listed in [MAINTAINERS] reviews all changes.
+
+## Commit and release conventions
+
+Use Conventional Commit subjects (`feat:`, `fix:`, `docs:`, `ci:`,
+`chore:`, and similar). Releases are maintainer decisions; until publication,
+there is no promise of stable module versions. Every release note must state
+whether SCNB bytes, public APIs, dependencies, or rollback behavior changed.
+
+[MAINTAINERS]: MAINTAINERS
+[README]: README.md
+[SECURITY]: SECURITY
+[SUPPORT]: SUPPORT

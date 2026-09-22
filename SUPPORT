@@ -1,0 +1,33 @@
+# Support
+
+namesearch is a standalone Go library and persistent filename-index package.
+It is pre-1.0, has no published binaries or module release, and is not a
+supported Stowcloud service or deployment component.
+
+## Supported environment
+
+- Go 1.27.1, as declared in `go.mod`.
+- Linux amd64 and arm64 are tested in CI.
+- The non-Linux compile targets listed in `.github/workflows/ci.yml` are
+  compile-checked but not runtime-tested.
+
+Other Go versions and platforms may work, but compatibility is not promised
+until CI coverage is added.
+
+## Getting help
+
+For usage questions, open a GitHub issue with the namesearch commit, Go version,
+operating system/architecture, a minimal reproducer, and whether the issue is
+in the root package or `index` package. Do not include private filenames,
+credentials, ACL data, or proprietary corpus contents.
+
+For suspected vulnerabilities, do not file a public issue. Follow
+[SECURITY](SECURITY).
+
+## Cache recovery
+
+The index is disposable cache state. If an index cannot be opened or reports
+corruption, disable it and continue with the walk tier, preserve the source
+corpus, and rebuild into a fresh directory. Keep the previous directory until
+verification succeeds, then replace it atomically. This is the supported
+rollback procedure; SCNB v1 bytes must not be edited in place.
