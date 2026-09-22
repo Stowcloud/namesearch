@@ -2,6 +2,7 @@ package index
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -405,4 +406,19 @@ func FuzzDecodeBlockNeverPanics(f *testing.F) {
 			t.Errorf("DecodeBlock returned a non-corrupt error: %v", err)
 		}
 	})
+}
+
+// This digest pins the complete deterministic SCNB v1 byte stream. Any format
+// change must deliberately update this compatibility gate.
+func TestSCNBV1FixtureBytesRemainStable(t *testing.T) {
+	fixture := []Entry{{Namespace: 1, Path: "a.txt"}, {Namespace: 1, Path: "b.txt"}}
+	buf, err := WriteBase(fixture, DefaultConfig().BlockSize, DefaultConfig().PruneDFRatio)
+	if err != nil {
+		t.Fatalf("WriteBase: %v", err)
+	}
+	got := fmt.Sprintf("%x", sha256.Sum256(buf))
+	const want = "663338cd2270485d1d615a583272fb484a1d9f9d64cc37e39ec74208f31379c7"
+	if got != want {
+		t.Fatalf("SCNB v1 fixture digest = %s, want %s", got, want)
+	}
 }

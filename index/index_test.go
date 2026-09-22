@@ -2,6 +2,7 @@ package index
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -388,6 +389,38 @@ func TestOpenRecoversATornDelta(t *testing.T) {
 	}
 	if rec.Torn {
 		t.Error("the torn tail was not cut on open")
+	}
+}
+
+// A checksum-corrupt delta refuses open; rebuilding from the public API after
+// removing the damaged cache restores queryability without serving bad data.
+func TestCorruptDeltaRefusesAndFreshRebuildRestoresQueryability(t *testing.T) {
+	dir := t.TempDir()
+	ix := openIndex(t, dir)
+	if err := ix.Append([]Entry{{Namespace: 1, Path: "restored.txt"}}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	path := filepath.Join(dir, "delta.000.idx")
+	buf, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read delta: %v", err)
+	}
+	buf[FrameHeader+1] ^= 0xff
+	if err := os.WriteFile(path, buf, 0o600); err != nil {
+		t.Fatalf("corrupt delta: %v", err)
+	}
+	if _, err := Open(dir, DefaultConfig()); !errors.Is(err, ErrIndexCorrupt) {
+		t.Fatalf("Open corrupted delta = %v, want ErrIndexCorrupt", err)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatalf("remove corrupt cache: %v", err)
+	}
+	rebuilt := openIndex(t, dir)
+	if err := rebuilt.Append([]Entry{{Namespace: 1, Path: "restored.txt"}}); err != nil {
+		t.Fatalf("rebuild append: %v", err)
+	}
+	if got := hitPaths(query(t, rebuilt, "restored")); !slices.Equal(got, []string{"restored.txt"}) {
+		t.Fatalf("fresh rebuild query = %v", got)
 	}
 }
 

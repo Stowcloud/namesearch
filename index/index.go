@@ -183,11 +183,14 @@ type Result struct {
 // MustFallBack reports that the caller must run a walk.
 func (r Result) MustFallBack() bool { return r.Fallback != FallbackNone }
 
-// Config is the index's tuning.
+// Config is the index's tuning. BlockSize is the number of names per block in
+// SCNB v1; it is also the block_size argument callers must pass to
+// EstimateNameIndex. Changing it changes newly built bytes and the estimator,
+// but never rewrites an existing base segment on open.
 type Config struct {
-	// BlockSize is 32, matching plocate's default and this one. Larger values
-	// compress better and shorten posting lists while making the postings less
-	// precise, shifting effort into scanning blocks that contain no match.
+	// BlockSize controls names packed into each immutable block. Zero at Open
+	// selects DefaultConfig's value; WriteBase treats zero as one for its low-
+	// level API compatibility.
 	BlockSize uint32
 	// PruneDFRatio discards any trigram appearing in more than this fraction of
 	// the blocks.
@@ -271,7 +274,7 @@ func (ix *NameIndex) loadDeltas(dir string) (uint64, error) {
 		path := filepath.Join(dir, name)
 		rec, rerr := ReadRecords(path)
 		if rerr != nil {
-			return 0, rerr
+			return 0, fmt.Errorf("%w: %s: %w", ErrIndexCorrupt, path, rerr)
 		}
 		if rec.Torn {
 			if terr := TruncateTo(path, rec.GoodLen); terr != nil {
@@ -299,7 +302,7 @@ func (ix *NameIndex) loadTombstones(dir string) (uint64, error) {
 	tombPath := filepath.Join(dir, tombName)
 	rec, err := ReadRecords(tombPath)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("%w: %s: %w", ErrIndexCorrupt, tombPath, err)
 	}
 	if rec.Torn {
 		if terr := TruncateTo(tombPath, rec.GoodLen); terr != nil {

@@ -155,9 +155,9 @@ func TestATornTailIsTruncatedAndThePrefixSurvives(t *testing.T) {
 	}
 }
 
-// A bit flip in a record body fails its checksum, and the scan stops there
-// rather than serving what the corrupted bytes decode to.
-func TestABitFlipInARecordStopsTheScan(t *testing.T) {
+// A bit flip in a complete record body is corruption, not a torn tail. The
+// reader refuses it so opening the index cannot silently discard valid data.
+func TestABitFlipInARecordIsRefused(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "delta.000.idx")
 	for i := range 3 {
 		payload, err := EncodePayload(uint64(i), []Entry{{Namespace: 1, Path: "f.txt"}})
@@ -173,27 +173,48 @@ func TestABitFlipInARecordStopsTheScan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	// Corrupt the first record's body, past its header.
 	buf[FrameHeader+1] ^= 0xff
-	//nolint:gosec // G703: this test's own TempDir and a fixed name.
 	if werr := os.WriteFile(path, buf, 0o600); werr != nil {
 		t.Fatalf("write: %v", werr)
 	}
 
-	rec, rerr := ReadRecords(path)
-	if rerr != nil {
-		t.Fatalf("ReadRecords: %v", rerr)
-	}
-	if len(rec.Records) != 0 {
-		t.Errorf("read %d records past a failed checksum, want 0", len(rec.Records))
-	}
-	if !rec.Torn {
-		t.Error("a failed checksum should leave the rest of the file unread")
+	if _, err := ReadRecords(path); !errors.Is(err, ErrCorrupt) {
+		t.Fatalf("ReadRecords error = %v, want ErrCorrupt", err)
 	}
 }
 
-// The length prefix is read off disk before the body, so a corrupt four bytes
-// must not ask for an allocation of whatever they happened to say.
+func TestReadRecordsRecoversOnlyAnIncompleteTrailingFrame(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "delta.000.idx")
+	payload, err := EncodePayload(1, []Entry{{Namespace: 1, Path: "kept.txt"}})
+	if err != nil {
+		t.Fatalf("EncodePayload: %v", err)
+	}
+	written, err := AppendRecord(path, payload)
+	if err != nil {
+		t.Fatalf("AppendRecord: %v", err)
+	}
+	framed, err := Frame([]byte("unfinished"))
+	if err != nil {
+		t.Fatalf("Frame: %v", err)
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := f.Write(framed[:len(framed)-2]); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	rec, err := ReadRecords(path)
+	if err != nil || !rec.Torn || rec.GoodLen != written || len(rec.Records) != 1 {
+		t.Fatalf("recovery = %+v, err %v", rec, err)
+	}
+}
+
+// A complete frame with an impossible length is corruption, never a tail to
+// trim: the header itself reached disk and cannot be explained by a short write.
 func TestReadRecordsRefusesAnOversizedLengthPrefix(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "delta.000.idx")
 	var buf []byte
@@ -203,14 +224,11 @@ func TestReadRecordsRefusesAnOversizedLengthPrefix(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	rec, err := ReadRecords(path)
-	if err != nil {
-		t.Fatalf("ReadRecords: %v", err)
-	}
-	if len(rec.Records) != 0 {
-		t.Error("a length past the ceiling produced a record")
+	if _, err := ReadRecords(path); !errors.Is(err, ErrCorrupt) {
+		t.Fatalf("ReadRecords error = %v, want ErrCorrupt", err)
 	}
 }
+
 
 // A record body is compressed only when that made it smaller, because
 // compressing unconditionally would grow the small records that dominate a

@@ -99,9 +99,11 @@ type Recovered struct {
 
 // ReadRecords returns every intact record.
 //
-// A torn tail is never an error. It is the expected state following a crash
-// rather than corruption, and treating it as a failure would disable the index
-// every time the machine lost power mid-append.
+// Only an incomplete trailing frame is recoverable. A partial header or a
+// declared body that runs past EOF is an unambiguous torn write because the
+// frame is the final bytes in an append-only segment. A complete frame with a
+// bad checksum, or an impossible declared length, is corruption and is
+// refused rather than silently truncated.
 func ReadRecords(path string) (Recovered, error) {
 	buf, err := os.ReadFile(path) //nolint:gosec // G304: as above, a segment path this package built.
 	if errors.Is(err, fs.ErrNotExist) {
@@ -113,27 +115,38 @@ func ReadRecords(path string) (Recovered, error) {
 
 	var out Recovered
 	pos := 0
-	for pos+FrameHeader <= len(buf) {
+	for {
+		remaining := len(buf) - pos
+		if remaining == 0 {
+			break
+		}
+		if remaining < FrameHeader {
+			out.Torn = true
+			break
+		}
 		length := binary.LittleEndian.Uint32(buf[pos:])
 		sum := binary.LittleEndian.Uint32(buf[pos+4:])
 		if length > MaxRecord {
-			break
+			return Recovered{}, fmt.Errorf("%w: record at offset %d declares %d bytes", ErrCorrupt, pos, length)
 		}
 		body := pos + FrameHeader
 		n, nerr := num.Narrow[int](length)
-		if nerr != nil || n > len(buf)-body {
+		if nerr != nil {
+			return Recovered{}, fmt.Errorf("%w: record at offset %d has an unrepresentable length", ErrCorrupt, pos)
+		}
+		if n > len(buf)-body {
+			out.Torn = true
 			break
 		}
 		end := body + n
 		if FNV1a32(buf[body:end]) != sum {
-			break
+			return Recovered{}, fmt.Errorf("%w: checksum mismatch at offset %d", ErrCorrupt, pos)
 		}
 		out.Records = append(out.Records, buf[body:end])
 		pos = end
 	}
 
 	out.GoodLen = int64(pos)
-	out.Torn = pos < len(buf)
 	return out, nil
 }
 
