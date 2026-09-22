@@ -229,7 +229,6 @@ func TestReadRecordsRefusesAnOversizedLengthPrefix(t *testing.T) {
 	}
 }
 
-
 // A record body is compressed only when that made it smaller, because
 // compressing unconditionally would grow the small records that dominate a
 // delta segment.
