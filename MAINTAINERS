@@ -7,6 +7,7 @@ Maintainers review API, dependency, CI, and SCNB format changes. Changes to
 SCNB bytes require explicit review and release notes. Until a separate release
 team is announced, the maintainer owns release and rollback decisions.
 
-This project is pre-1.0 and has no published release artifacts yet. Issues and
-pull requests are welcome from the community; maintainer approval is required
-before merging changes that alter public behavior or persistent bytes.
+The v0.1.0 release candidate is being prepared; it remains a release candidate
+until the maintainer creates the tag. Issues and pull requests are welcome from
+the community; maintainer approval is required before merging changes that
+alter public behavior or persistent bytes.

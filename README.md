@@ -9,11 +9,11 @@ optional cache: callers can always fall back to a filesystem walk.
 
 ## Stability and release policy
 
-This repository is pre-1.0. Public APIs, defaults, and on-disk behavior may
-change between releases when the change is documented and migration or rollback
-steps are provided. Compatibility-sensitive changes require tests and release
-notes. There are currently no published binaries, modules, or release
-artifacts; this repository is not yet a publication of the namesearch module.
+This repository is preparing the v0.1.0 release candidate. Public APIs,
+defaults, and on-disk behavior may change between pre-1.0 releases when the
+change is documented and migration or rollback steps are provided. The module
+is published only when the maintainer creates the `v0.1.0` tag; this release
+preparation does not publish, push, or tag anything.
 
 The SCNB v1 bytes are a separate compatibility contract. Existing SCNB v1
 segments must remain readable, and changing their bytes requires an explicit

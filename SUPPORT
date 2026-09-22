@@ -1,8 +1,8 @@
 # Support
 
 namesearch is a standalone Go library and persistent filename-index package.
-It is pre-1.0, has no published binaries or module release, and is not a
-supported Stowcloud service or deployment component.
+The v0.1.0 release candidate is being prepared and is not a supported
+Stowcloud service or deployment component.
 
 ## Supported environment
 
