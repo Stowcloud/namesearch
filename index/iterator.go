@@ -122,7 +122,7 @@ func (ix *NameIndex) Candidates(q CandidateQuery) (*CandidateIterator, Candidate
 	switch {
 	case len(folded) < MinTrigramQuery:
 		fallback = FallbackQueryTooShort
-	case state.Completeness != Complete || ix.entryCount() == 0:
+	case state.Completeness != Complete:
 		fallback = FallbackIncomplete
 	case ix.base != nil:
 		_, fallback = ix.candidateKindsLocked(search.DistinctTrigrams(folded))
